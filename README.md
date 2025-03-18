@@ -181,7 +181,7 @@ The package includes both unit tests and integration tests. Unit tests can be ru
 To run only the unit tests, which don't make any actual SEC API calls:
 
 ```bash
-cd pkg/sec && go test -v ./pkg/sec
+cd pkg/sec && go test -v
 ```
 
 ### Running Integration Tests
@@ -189,7 +189,7 @@ cd pkg/sec && go test -v ./pkg/sec
 Integration tests are disabled by default to avoid hitting SEC rate limits during CI. To run the integration tests:
 
 ```bash
-cd pkg/sec && go test -v -integration ./pkg/sec
+cd pkg/sec && go test -v -integration
 ```
 
 The integration tests will make real API calls to the SEC EDGAR database, so they should be run sparingly. The integration tests use a small number of requests and clean up after themselves.
