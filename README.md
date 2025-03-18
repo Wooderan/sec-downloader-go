@@ -172,6 +172,28 @@ Legacy method that downloads filings and returns the number of filings downloade
 
 Returns a list of supported form types.
 
+## Testing
+
+The package includes both unit tests and integration tests. Unit tests can be run without making actual API calls to the SEC EDGAR database, while integration tests make real API calls.
+
+### Running Unit Tests
+
+To run only the unit tests, which don't make any actual SEC API calls:
+
+```bash
+cd pkg/sec && go test -v ./pkg/sec
+```
+
+### Running Integration Tests
+
+Integration tests are disabled by default to avoid hitting SEC rate limits during CI. To run the integration tests:
+
+```bash
+cd pkg/sec && go test -v -integration ./pkg/sec
+```
+
+The integration tests will make real API calls to the SEC EDGAR database, so they should be run sparingly. The integration tests use a small number of requests and clean up after themselves.
+
 ## Examples
 
 See the [examples](cmd/examples) for more usage examples.
