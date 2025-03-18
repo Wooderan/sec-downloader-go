@@ -5,9 +5,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// GetSaveLocation returns the path where a filing should be saved
+// GetSaveLocation returns the path where a filing should be saved.
+// It constructs a directory path based on the company identifier, form type, and accession number.
+//
+// Parameters:
+//   - metadata: The download metadata containing configuration options
+//   - accessionNumber: The accession number of the filing
+//   - saveFilename: The filename to save the document as
+//
+// Returns:
+//   - A string containing the full path where the filing should be saved
 func GetSaveLocation(metadata *DownloadMetadata, accessionNumber, saveFilename string) string {
 	companyIdentifier := metadata.Ticker
 	if companyIdentifier == "" {
@@ -24,7 +34,14 @@ func GetSaveLocation(metadata *DownloadMetadata, accessionNumber, saveFilename s
 	)
 }
 
-// SaveDocument saves a document to disk
+// SaveDocument saves a document to disk, creating any necessary directories.
+//
+// Parameters:
+//   - filingContents: The raw content of the filing as a byte slice
+//   - savePath: The full path where the filing should be saved
+//
+// Returns:
+//   - nil on success, error if the save operation fails
 func SaveDocument(filingContents []byte, savePath string) error {
 	// Create all parent directories as needed
 	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
@@ -39,7 +56,16 @@ func SaveDocument(filingContents []byte, savePath string) error {
 	return nil
 }
 
-// AggregateFilingsToDownload aggregates the filings to download
+// AggregateFilingsToDownload aggregates the filings to download based on download metadata.
+// It fetches the filing list from the SEC and filters it according to the specified criteria.
+//
+// Parameters:
+//   - metadata: The download metadata containing filtering options
+//   - client: The SEC client to use for API requests
+//
+// Returns:
+//   - A slice of ToDownload objects and nil error on success
+//   - nil and error on failure
 func AggregateFilingsToDownload(metadata *DownloadMetadata, client *SECClient) ([]ToDownload, error) {
 	// Format the submission URL
 	submissionFile := fmt.Sprintf(SubmissionFileFormat, metadata.CIK)
@@ -51,101 +77,107 @@ func AggregateFilingsToDownload(metadata *DownloadMetadata, client *SECClient) (
 		return nil, fmt.Errorf("failed to get list of available filings: %w", err)
 	}
 
-	// Prepare the list of filings to download
+	// Filter the filings based on the metadata
+	filings := submissionData.Filings.Recent
 	var toDownload []ToDownload
-	filingCount := 0
+	for i := 0; i < len(filings.AccessionNumber) && len(toDownload) < metadata.Limit; i++ {
+		// Get the form for this filing
+		form := filings.Form[i]
 
-	// Get the recent filings
-	recent := submissionData.Filings.Recent
-
-	// Iterate through the filings
-	for i := 0; i < len(recent.AccessionNumber); i++ {
-		// Check if we've reached the limit
-		if filingCount >= metadata.Limit {
-			break
-		}
-
-		// Get the filing form
-		form := recent.Form[i]
-
-		// Check if the form matches what we're looking for
+		// Skip if form doesn't match and we're not checking for amendments
 		if !strings.EqualFold(form, metadata.Form) {
-			// If we're not including amends, skip this filing
-			if !metadata.IncludeAmends || !strings.HasSuffix(strings.ToUpper(form), AmendsSuffix) {
-				continue
-			}
-
-			// If we are including amends, check if the base form matches
-			baseForm := strings.TrimSuffix(strings.ToUpper(form), AmendsSuffix)
-			if !strings.EqualFold(baseForm, metadata.Form) {
+			if !metadata.IncludeAmends || !strings.EqualFold(form, metadata.Form+AmendsSuffix) {
 				continue
 			}
 		}
 
-		// Check if the filing date is within the requested range
-		withinRange, err := WithinRequestedDateRange(metadata, recent.FilingDate[i])
+		// Parse the filing date
+		filingDateStr := filings.FilingDate[i]
+		filingDate, err := time.Parse(DateFormat, filingDateStr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check if filing date is within range: %w", err)
-		}
-
-		if !withinRange {
+			// Skip filings with invalid dates
 			continue
 		}
 
-		// Check if we should skip this accession number
-		accNum := recent.AccessionNumber[i]
-		if metadata.AccessionNumbersToSkip != nil && metadata.AccessionNumbersToSkip[accNum] {
+		// Skip filings outside the date range
+		if filingDate.Before(metadata.After) || filingDate.After(metadata.Before) {
 			continue
 		}
 
-		// Get the primary document
-		primaryDoc := recent.PrimaryDocument[i]
-
-		// Create the ToDownload object
-		td, err := GetToDownload(metadata.CIK, accNum, primaryDoc)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get download info: %w", err)
+		// Skip filings with specified accession numbers
+		accessionNumber := filings.AccessionNumber[i]
+		if metadata.AccessionNumbersToSkip != nil && metadata.AccessionNumbersToSkip[accessionNumber] {
+			continue
 		}
 
+		// Get the document to download
+		doc := filings.PrimaryDocument[i]
+		td, err := GetToDownload(metadata.CIK, accessionNumber, doc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get download URL for accession number %s: %w", accessionNumber, err)
+		}
+
+		// Add to the list
 		toDownload = append(toDownload, *td)
-		filingCount++
 	}
 
 	return toDownload, nil
 }
 
-// GetToDownload creates a ToDownload object for a filing
+// GetToDownload constructs a ToDownload object with the appropriate URLs for a filing.
+//
+// Parameters:
+//   - cik: The Central Index Key of the company
+//   - accNum: The accession number of the filing
+//   - doc: The primary document filename
+//
+// Returns:
+//   - A ToDownload object and nil error on success
+//   - nil and error on failure
 func GetToDownload(cik, accNum, doc string) (*ToDownload, error) {
-	// Format the accession number for the URL (remove dashes)
-	accNumNoDash := strings.ReplaceAll(accNum, "-", "")
+	// Remove dashes from accession number
+	rawAccNum := strings.ReplaceAll(accNum, "-", "")
 
-	// Create the raw filing URI (index page that contains links to all documents)
-	rawFilingURI := fmt.Sprintf(URLFilingArchive, cik, accNumNoDash, accNum)
-
-	// Create the primary document URI
-	var primaryDocURI string
-	if doc != "" {
-		primaryDocURI = fmt.Sprintf(URLFiling, cik, accNumNoDash, doc)
+	// Calculate the URLs for the filing
+	if len(rawAccNum) != 18 {
+		return nil, fmt.Errorf("invalid accession number: %s", accNum)
 	}
 
-	// Get the file extension for the details document
-	var detailsDocSuffix string
+	// Calculate the base URL and archive URLs
+	rawFilingURL := fmt.Sprintf(URLFilingArchive, cik, rawAccNum, accNum)
+
+	// Determine the primary document URI if available
+	var primaryDocURI string
 	if doc != "" {
-		ext := filepath.Ext(doc)
-		if ext != "" {
-			detailsDocSuffix = ext
-		}
+		primaryDocURI = fmt.Sprintf(URLFiling, cik, rawAccNum, doc)
+	}
+
+	// Determine the details document suffix (e.g., for form 4 XML)
+	detailsDocSuffix := ""
+	if strings.EqualFold(doc, "primary-document.html") {
+		detailsDocSuffix = "-index-headers.html"
+	} else if strings.HasSuffix(strings.ToLower(doc), ".htm") || strings.HasSuffix(strings.ToLower(doc), ".html") {
+		detailsDocSuffix = strings.TrimSuffix(strings.TrimSuffix(doc, ".htm"), ".html") + "-index-headers.html"
 	}
 
 	return &ToDownload{
-		RawFilingURI:     rawFilingURI,
+		RawFilingURI:     rawFilingURL,
 		PrimaryDocURI:    primaryDocURI,
 		AccessionNumber:  accNum,
 		DetailsDocSuffix: detailsDocSuffix,
 	}, nil
 }
 
-// FetchAndSaveFilings fetches and saves filings
+// FetchAndSaveFilings fetches and saves filings based on the download metadata.
+// This is the main orchestration function that ties together the entire download process.
+//
+// Parameters:
+//   - metadata: The download metadata containing configuration options
+//   - client: The SEC client to use for API requests
+//
+// Returns:
+//   - The number of filings downloaded and nil error on success
+//   - 0 and error on failure
 func FetchAndSaveFilings(metadata *DownloadMetadata, client *SECClient) (int, error) {
 	// Get the list of filings to download
 	toDownload, err := AggregateFilingsToDownload(metadata, client)
@@ -154,38 +186,47 @@ func FetchAndSaveFilings(metadata *DownloadMetadata, client *SECClient) (int, er
 	}
 
 	// Download and save each filing
+	downloadCount := 0
 	for _, td := range toDownload {
-		// Download the raw filing
-		rawFiling, err := client.DownloadFiling(td.RawFilingURI)
+		// Download index.html
+		indexContents, err := client.DownloadFiling(td.RawFilingURI)
 		if err != nil {
-			return 0, fmt.Errorf("failed to download raw filing for accession number %s: %w", td.AccessionNumber, err)
+			continue
 		}
 
-		// Save the raw filing
-		rawFilingPath := GetSaveLocation(metadata, td.AccessionNumber, FilingFullSubmissionFilename)
-		if err := SaveDocument(rawFiling, rawFilingPath); err != nil {
-			return 0, fmt.Errorf("failed to save raw filing for accession number %s to %s: %w", td.AccessionNumber, rawFilingPath, err)
+		// Save index.html
+		savePath := GetSaveLocation(metadata, td.AccessionNumber, FilingFullSubmissionFilename)
+		if err := SaveDocument(indexContents, savePath); err != nil {
+			continue
 		}
 
-		// If the primary document exists, download and save it
+		// Download primary document if available
 		if td.PrimaryDocURI != "" {
-			// Download the primary document
-			primaryDoc, err := client.DownloadFiling(td.PrimaryDocURI)
-			if err != nil {
-				return 0, fmt.Errorf("failed to download primary document for accession number %s: %w", td.AccessionNumber, err)
-			}
-
-			// Save the primary document
-			primaryDocFilename := PrimaryDocFilenameStem
-			if td.DetailsDocSuffix != "" {
-				primaryDocFilename += td.DetailsDocSuffix
-			}
-			primaryDocPath := GetSaveLocation(metadata, td.AccessionNumber, primaryDocFilename)
-			if err := SaveDocument(primaryDoc, primaryDocPath); err != nil {
-				return 0, fmt.Errorf("failed to save primary document for accession number %s to %s: %w", td.AccessionNumber, primaryDocPath, err)
+			primaryContents, err := client.DownloadFiling(td.PrimaryDocURI)
+			if err == nil {
+				// Extract filename from primary document URI
+				_, primaryFileName := filepath.Split(td.PrimaryDocURI)
+				primarySavePath := GetSaveLocation(metadata, td.AccessionNumber, primaryFileName)
+				_ = SaveDocument(primaryContents, primarySavePath)
 			}
 		}
+
+		// Download details document if requested
+		if metadata.DownloadDetails && td.DetailsDocSuffix != "" {
+			// Calculate the details URL
+			rawAccNum := strings.ReplaceAll(td.AccessionNumber, "-", "")
+			detailsURL := fmt.Sprintf(URLFiling, metadata.CIK, rawAccNum, rawAccNum+td.DetailsDocSuffix)
+
+			// Download details document
+			detailsContents, err := client.DownloadFiling(detailsURL)
+			if err == nil {
+				detailsSavePath := GetSaveLocation(metadata, td.AccessionNumber, fmt.Sprintf("index%s", td.DetailsDocSuffix))
+				_ = SaveDocument(detailsContents, detailsSavePath)
+			}
+		}
+
+		downloadCount++
 	}
 
-	return len(toDownload), nil
+	return downloadCount, nil
 }

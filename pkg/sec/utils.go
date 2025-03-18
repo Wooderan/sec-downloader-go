@@ -7,13 +7,30 @@ import (
 	"time"
 )
 
-// IsCIK checks if the given string is a CIK
+// IsCIK checks if the given string is a CIK (Central Index Key).
+// A string is considered to be a CIK if it can be converted to an integer.
+//
+// Parameters:
+//   - tickerOrCIK: The string to check
+//
+// Returns:
+//   - true if the string is a CIK, false otherwise
 func IsCIK(tickerOrCIK string) bool {
 	_, err := strconv.Atoi(tickerOrCIK)
 	return err == nil
 }
 
-// ValidateAndConvertTickerOrCIK validates and converts a ticker or CIK
+// ValidateAndConvertTickerOrCIK validates and converts a ticker or CIK to a properly formatted CIK.
+// If the input is a ticker, it will be converted to a CIK using the provided mapping.
+// If the input is already a CIK, it will be zero-padded to ensure it is exactly 10 digits long.
+//
+// Parameters:
+//   - tickerOrCIK: The ticker symbol or CIK to validate and convert
+//   - tickerToCIKMapping: A map of ticker symbols to CIK numbers
+//
+// Returns:
+//   - The properly formatted CIK and nil error on success
+//   - Empty string and error on failure
 func ValidateAndConvertTickerOrCIK(tickerOrCIK string, tickerToCIKMapping map[string]string) (string, error) {
 	tickerOrCIK = strings.TrimSpace(strings.ToUpper(tickerOrCIK))
 
@@ -40,7 +57,15 @@ func ValidateAndConvertTickerOrCIK(tickerOrCIK string, tickerToCIKMapping map[st
 	return cik, nil
 }
 
-// ValidateAndParseDate validates and parses a date string
+// ValidateAndParseDate validates and parses a date input, which can be either a string or a time.Time object.
+// If the input is a string, it must be in the format "YYYY-MM-DD".
+//
+// Parameters:
+//   - inputDate: The date to validate and parse (string in "YYYY-MM-DD" format or time.Time)
+//
+// Returns:
+//   - The parsed time.Time object and nil error on success
+//   - Zero time.Time and error on failure
 func ValidateAndParseDate(inputDate interface{}) (time.Time, error) {
 	switch v := inputDate.(type) {
 	case time.Time:
@@ -56,7 +81,17 @@ func ValidateAndParseDate(inputDate interface{}) (time.Time, error) {
 	}
 }
 
-// WithinRequestedDateRange checks if a filing date is within the requested date range
+// WithinRequestedDateRange checks if a filing date is within the requested date range.
+// The filing date is compared against the After and Before fields in the metadata.
+//
+// Parameters:
+//   - metadata: The download metadata containing the After and Before date bounds
+//   - filingDate: The filing date to check as a string in "YYYY-MM-DD" format
+//
+// Returns:
+//   - true and nil error if the date is within range
+//   - false and nil error if the date is outside range
+//   - false and error if there was an error parsing the filing date
 func WithinRequestedDateRange(metadata *DownloadMetadata, filingDate string) (bool, error) {
 	targetDate, err := time.Parse(DateFormat, filingDate)
 	if err != nil {

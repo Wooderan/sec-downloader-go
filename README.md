@@ -41,6 +41,8 @@ go get github.com/user/sec-downloader-go
 
 ## Usage
 
+### Basic Usage
+
 ```go
 package main
 
@@ -59,8 +61,76 @@ func main() {
 		log.Fatalf("Failed to create downloader: %v", err)
 	}
 
-	// Download the latest 10-K filing for Apple
-	count, err := downloader.Get("10-K", "AAPL", 1, nil, nil, false, false, nil)
+	// Download the latest 10-K filing for Apple using functional options pattern
+	count, err := downloader.GetWithOptions("10-K", "AAPL", sec.WithLimit(1))
+	if err != nil {
+		log.Fatalf("Failed to download filings: %v", err)
+	}
+	fmt.Printf("Downloaded %d filings\n", count)
+}
+```
+
+### Using Options Pattern
+
+The options pattern provides a more flexible and readable way to configure the downloader:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/user/sec-downloader-go/pkg/sec"
+)
+
+func main() {
+	downloader, err := sec.NewDownloader("YourCompanyName", "your.email@example.com", "downloads")
+	if err != nil {
+		log.Fatalf("Failed to create downloader: %v", err)
+	}
+
+	// Download 10-Q filings for Tesla with multiple options
+	count, err := downloader.GetWithOptions(
+		"10-Q", 
+		"TSLA",
+		sec.WithLimit(5),
+		sec.WithDateRange("2022-01-01", "2023-12-31"),
+		sec.WithIncludeAmends(true),
+		sec.WithDownloadDetails(true),
+	)
+	if err != nil {
+		log.Fatalf("Failed to download filings: %v", err)
+	}
+	fmt.Printf("Downloaded %d filings\n", count)
+
+	// You can also use time.Time objects for date ranges
+	startDate := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2023, 12, 31, 0, 0, 0, 0, time.UTC)
+	
+	count, err = downloader.GetWithOptions(
+		"8-K", 
+		"MSFT",
+		sec.WithLimit(10),
+		sec.WithDateRange(startDate, endDate),
+	)
+	if err != nil {
+		log.Fatalf("Failed to download filings: %v", err)
+	}
+	fmt.Printf("Downloaded %d filings\n", count)
+	
+	// Skip specific filings by accession number
+	accessionNumbersToSkip := map[string]bool{
+		"0001193125-22-067124": true,
+		"0001193125-22-123456": true,
+	}
+	
+	count, err = downloader.GetWithOptions(
+		"10-K", 
+		"AAPL",
+		sec.WithAccessionNumbersToSkip(accessionNumbersToSkip),
+	)
 	if err != nil {
 		log.Fatalf("Failed to download filings: %v", err)
 	}
@@ -78,18 +148,25 @@ Creates a new `Downloader` instance.
 - `emailAddress`: Your email address (required by SEC)
 - `downloadFolder`: Path to download location (defaults to current working directory)
 
-### `Get(form, tickerOrCIK string, limit int, after, before interface{}, includeAmends, downloadDetails bool, accessionNumbersToSkip map[string]bool) (int, error)`
+### `GetWithOptions(form, tickerOrCIK string, options ...DownloadOption) (int, error)`
 
-Downloads filings and returns the number of filings downloaded.
+Downloads filings using the functional options pattern and returns the number of filings downloaded.
 
 - `form`: Form type to download (e.g., "8-K", "10-K")
 - `tickerOrCIK`: Ticker or CIK for which to download filings
-- `limit`: Max number of filings to download (0 for all available filings)
-- `after`: Date after which to download filings (string in "YYYY-MM-DD" format or time.Time)
-- `before`: Date before which to download filings (string in "YYYY-MM-DD" format or time.Time)
-- `includeAmends`: Whether to include filing amendments (e.g., "8-K/A")
-- `downloadDetails`: Whether to download filing details
-- `accessionNumbersToSkip`: Map of accession numbers to skip
+- `options`: Variadic list of options to configure the download
+
+### Option Functions
+
+- `WithLimit(limit int)`: Sets the maximum number of filings to download (0 for all available)
+- `WithDateRange(after, before interface{})`: Sets the date range for filings (string "YYYY-MM-DD" or time.Time)
+- `WithIncludeAmends(includeAmends bool)`: Sets whether to include filing amendments
+- `WithDownloadDetails(downloadDetails bool)`: Sets whether to download filing details
+- `WithAccessionNumbersToSkip(accessionNumbersToSkip map[string]bool)`: Sets accession numbers to skip
+
+### `Get(form, tickerOrCIK string, limit int, after, before interface{}, includeAmends, downloadDetails bool, accessionNumbersToSkip map[string]bool) (int, error)`
+
+Legacy method that downloads filings and returns the number of filings downloaded.
 
 ### `GetSupportedForms() []string`
 
